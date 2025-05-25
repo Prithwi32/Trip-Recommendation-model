@@ -17,7 +17,6 @@ venv/
 *.swo
 
 # Data files (CSV, etc.) - Ignore if large/sensitive
-*.csv
 *.xlsx
 *.db
 
