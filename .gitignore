@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyd
+*.pyo
+
+# Virtual Environment
+venv/
+.env/
+.envrc
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Data files (CSV, etc.) - Ignore if large/sensitive
+*.csv
+*.xlsx
+*.db
+
+# Logs and temp files
+*.log
+*.tmp
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
