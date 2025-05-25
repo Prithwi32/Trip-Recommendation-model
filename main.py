@@ -17,7 +17,12 @@ logger = logging.getLogger(__name__)
 if not hasattr(torch, 'get_default_device'):
     torch.get_default_device = lambda: torch.device('cpu')  # Force CPU on Render
 
-app = FastAPI()
+# Initialize FastAPI app with description and version
+app = FastAPI(
+    title="Trip Recommendation API",
+    description="API for recommending travel destinations based on user preferences",
+    version="1.0.0"
+)
 
 # Optimized dataset loading
 def load_dataset():
@@ -38,24 +43,33 @@ def load_dataset():
         logger.error(f"Dataset loading failed: {e}")
         raise
 
-df = load_dataset()
+# Load dataset at startup
+try:
+    df = load_dataset()
+    logger.info("Dataset loaded successfully")
+except Exception as e:
+    logger.error(f"Failed to load dataset: {e}")
+    raise
 
 # Lightweight model loading
 def load_model():
     try:
-        model = SentenceTransformer("paraphrase-MiniLM-L3-v2", device='cpu')  # Smaller model
-        
-        # Optimize memory usage
-        model.max_seq_length = 128  # Reduce sequence length
+        model = SentenceTransformer("paraphrase-MiniLM-L3-v2", device='cpu')
+        model.max_seq_length = 128
         for param in model.parameters():
             param.requires_grad = False
-            
         return model
     except Exception as e:
         logger.error(f"Model loading failed: {e}")
         raise
 
-model = load_model()
+# Load model at startup
+try:
+    model = load_model()
+    logger.info("Model loaded successfully")
+except Exception as e:
+    logger.error(f"Failed to load model: {e}")
+    raise
 
 @lru_cache(maxsize=1)
 def get_embeddings():
@@ -79,10 +93,32 @@ class Input(BaseModel):
     state: Optional[str] = ""
     country: Optional[str] = ""
 
+@app.get("/health")
+async def health_check():
+    """
+    Health check endpoint for monitoring application status
+    """
+    try:
+        # Verify model and dataset are loaded
+        if model is None or df is None:
+            raise HTTPException(status_code=503, detail="Service not fully initialized")
+        return {
+            "status": "healthy",
+            "model_loaded": True,
+            "dataset_loaded": True,
+            "dataset_size": len(df)
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        raise HTTPException(status_code=503, detail=str(e))
+
 @app.post("/recommend")
 async def recommend(input: Input):
+    """
+    Get travel recommendations based on user preferences
+    """
     try:
-        # Validate input quickly first
+        # Validate input
         if not any([input.trip_type, input.budget, input.season, input.activities, input.state, input.country]):
             raise HTTPException(400, "At least one input field required")
 
@@ -94,13 +130,13 @@ async def recommend(input: Input):
             *[a.lower().strip() for a in input.activities]
         ])
 
-        # Get embeddings
+        # Get embeddings and calculate similarity
         query_embedding = model.encode(query, convert_to_tensor=True)
         scores = util.cos_sim(query_embedding, get_embeddings())[0]
 
         # Process results efficiently
         results = []
-        for idx, score in enumerate(scores.cpu().numpy()):  # Process on CPU
+        for idx, score in enumerate(scores.cpu().numpy()):
             row = df.iloc[idx]
             final_score = float(score)
             
@@ -131,18 +167,19 @@ async def recommend(input: Input):
                 "Score": round(final_score, 4)
             })
 
+        # Clean up memory
+        del scores
+        torch.cuda.empty_cache() if torch.cuda.is_available() else None
+
         # Deduplicate and return top 10
         unique_results = {r["Place"]: r for r in results}
         return sorted(unique_results.values(), key=lambda x: x["Score"], reverse=True)[:10]
 
     except Exception as e:
         logger.error(f"Recommendation failed: {e}")
-        raise HTTPException(500, "Internal server error")
-
-@app.get("/health")
-async def health_check():
-    return {"status": "healthy", "model_ready": True}
+        raise HTTPException(500, str(e))
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, workers=1)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, workers=1)
